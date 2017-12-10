@@ -1,0 +1,274 @@
+From 9ef5d6f3bf5997b0a988ac8f9938421a51e88ae0 Mon Sep 17 00:00:00 2001
+From: youjungk <youjungk@sfu.ca>
+Date: Tue, 11 Apr 2017 21:20:22 -0700
+Subject: [PATCH] git_commit
+
+---
+ Makefile                               |  2 +-
+ arch/x86/entry/syscalls/syscall_64.tbl |  3 +-
+ cs300/Makefile                         |  1 +
+ cs300/array_stats.c                    | 73 +++++++++++++++++++++++++++
+ cs300/array_stats.h                    | 10 ++++
+ cs300/process_ancestors.c              | 91 ++++++++++++++++++++++++++++++++++
+ cs300/process_ancestors.h              | 18 +++++++
+ 7 files changed, 196 insertions(+), 2 deletions(-)
+ create mode 100644 cs300/Makefile
+ create mode 100644 cs300/array_stats.c
+ create mode 100644 cs300/array_stats.h
+ create mode 100644 cs300/process_ancestors.c
+ create mode 100644 cs300/process_ancestors.h
+
+diff --git a/Makefile b/Makefile
+index c0c41c9..6b4f524 100644
+--- a/Makefile
++++ b/Makefile
+@@ -910,7 +910,7 @@ export mod_sign_cmd
+ 
+ 
+ ifeq ($(KBUILD_EXTMOD),)
+-core-y		+= kernel/ certs/ mm/ fs/ ipc/ security/ crypto/ block/
++core-y		+= kernel/ certs/ mm/ fs/ ipc/ security/ crypto/ block/ cs300/
+ 
+ vmlinux-dirs	:= $(patsubst %/,%,$(filter %/, $(init-y) $(init-m) \
+ 		     $(core-y) $(core-m) $(drivers-y) $(drivers-m) \
+diff --git a/arch/x86/entry/syscalls/syscall_64.tbl b/arch/x86/entry/syscalls/syscall_64.tbl
+index e93ef0b..8ddd9dd 100644
+--- a/arch/x86/entry/syscalls/syscall_64.tbl
++++ b/arch/x86/entry/syscalls/syscall_64.tbl
+@@ -338,7 +338,8 @@
+ 329	common	pkey_mprotect		sys_pkey_mprotect
+ 330	common	pkey_alloc		sys_pkey_alloc
+ 331	common	pkey_free		sys_pkey_free
+-
++332	common	array_stats		sys_array_stats
++333	common	process_ancestors	sys_process_ancestors
+ #
+ # x32-specific system call numbers start at 512 to avoid cache impact
+ # for native 64-bit operation.
+diff --git a/cs300/Makefile b/cs300/Makefile
+new file mode 100644
+index 0000000..e7bc82a
+--- /dev/null
++++ b/cs300/Makefile
+@@ -0,0 +1 @@
++obj-y := array_stats.o process_ancestors.o
+diff --git a/cs300/array_stats.c b/cs300/array_stats.c
+new file mode 100644
+index 0000000..75af673
+--- /dev/null
++++ b/cs300/array_stats.c
+@@ -0,0 +1,73 @@
++#include "array_stats.h"
++#include <linux/unistd.h>
++#include <linux/kernel.h>
++#include <linux/slab.h>
++#include <linux/uaccess.h>
++
++#define _ARRAY_STATS_ 331
++
++//function def
++asmlinkage long sys_array_stats(struct array_stats *stats, long data[], long size);
++
++//function implementation
++asmlinkage long sys_array_stats(struct array_stats *stats, long data[], long size) {
++    struct array_stats *temp_res = NULL;
++    long *copied_data = NULL;
++    //variables for loops
++    long i = 0;
++    long j = 0;
++    long l =0;
++	long k=0;
++    long temp;
++    long sum = 0;
++
++    if (size <= 0) {
++        return -EINVAL;
++    }
++
++//If the kmalloc() call succeeds, ptr now points to a block of memory that is at least the requested size. 
++//The GFP_KERNEL flag specifies the behavior of the memory allocator while trying to obtain the memory to return to the caller of kmalloc().
++    copied_data = kmalloc(sizeof (long) * size, GFP_KERNEL);
++    while (i<size){
++        if (copy_from_user(&copied_data[i], &data[i], sizeof (long))) {
++            kfree(copied_data);
++            return -EFAULT;
++        }
++        i++;
++    }
++
++//Sorting the data using insertion sort
++    for (k = 0; k < size; ++k) {
++        j = k;
++        while (j > 0 && copied_data[j] < copied_data[j - 1]) {
++            temp = copied_data[j];
++            copied_data[j] = copied_data[j - 1];
++            copied_data[j - 1] = temp;
++            --j;
++        }
++    }
++
++//Calculate the sum
++    while(l<size){
++        sum += copied_data[l];
++        l++;
++    }
++
++//Assigning sorted value into the temporary result //first value is the smallest value //last element is the largest value
++    temp_res = kmalloc(sizeof (struct array_stats), GFP_KERNEL);
++    temp_res->min = copied_data[0];
++    temp_res->max = copied_data[size - 1];
++    temp_res->sum = sum;
++
++    if (copy_to_user(stats, temp_res, sizeof (struct array_stats))) {
++        kfree(copied_data);
++        kfree(temp_res);
++        return -EFAULT;
++    }
++
++//Finally free up the memory that was used
++    kfree(copied_data);
++    kfree(temp_res);
++
++    return 0;
++}
+diff --git a/cs300/array_stats.h b/cs300/array_stats.h
+new file mode 100644
+index 0000000..0e429fe
+--- /dev/null
++++ b/cs300/array_stats.h
+@@ -0,0 +1,10 @@
++#ifndef _ARRAY_STATS_H_
++#define _ARRAY_STATS_H_
++
++struct array_stats{
++	long min;
++	long max;
++	long sum;
++};
++
++#endif
+diff --git a/cs300/process_ancestors.c b/cs300/process_ancestors.c
+new file mode 100644
+index 0000000..51fe9e4
+--- /dev/null
++++ b/cs300/process_ancestors.c
+@@ -0,0 +1,91 @@
++#include "process_ancestors.h"
++#include <linux/unistd.h>
++#include <linux/kernel.h>
++#include <linux/slab.h>
++#include <linux/uaccess.h>
++#include <linux/sched.h>
++
++#define __PROCESS_ANCESTORS_ 332
++#define ANCESTOR_NAME_LEN 16
++
++//function def
++asmlinkage long sys_process_ancestors(struct process_info info_array[], long size, long *num_filled);
++struct process_info process_info_getter(struct task_struct* curr_task);
++
++struct process_info process_info_getter(struct task_struct* curr_task){
++	struct process_info result;
++	int num_children=0;
++	int num_sibling=0;
++
++	struct list_head* ptr;
++
++	result.pid = curr_task->pid;
++	result.state = curr_task->state;
++	result.uid = curr_task->cred->uid.val;
++	result.nvcsw = curr_task->nvcsw;
++	result.nivcsw = curr_task->nivcsw;
++	// name is in .comm and can be copied using memcpy function
++	memcpy(result.name, curr_task->comm, ANCESTOR_NAME_LEN);
++
++//list_for_each used to traverse
++//list_for_each(p, list) {
++        /* p points to an entry in the list */
++//}
++	list_for_each(ptr, &(curr_task->children)){
++		++num_children;
++	}
++	list_for_each(ptr, &(curr_task->sibling)){
++		++num_sibling;
++	}
++
++	result.num_children = num_children;
++	result.num_siblings = num_sibling;
++
++	return result;
++}
++
++asmlinkage long sys_process_ancestors(struct process_info info_array[], long size, long *num_filled) {
++	long curr_num_filled = 0;
++	struct process_info* temp_info_array;
++	struct task_struct* curr_process =NULL;
++	struct task_struct* prev_process=NULL;
++	int i=0;
++	int k=0;
++	int j=1;
++	
++	if (size <=0){return -EINVAL;}
++	temp_info_array = kmalloc(sizeof(struct process_info)*size, GFP_KERNEL);
++
++	for (i=0;i<size;i++){
++		if(copy_from_user(&temp_info_array[i],&info_array[i], sizeof(struct process_info))){
++			kfree(temp_info_array);
++			return -EFAULT;
++		}
++	}
++
++	//latest children
++	temp_info_array[0] = process_info_getter(current);
++	curr_num_filled++;
++
++	while (j<size && curr_process != prev_process){
++		temp_info_array[j] = process_info_getter(curr_process);
++		curr_num_filled++;
++		prev_process = curr_process;
++		curr_process = curr_process->parent;
++		j++;
++	}
++
++	for (k=0; k<curr_num_filled;k++){
++		if (copy_to_user(&info_array[k], &temp_info_array[k], sizeof(struct process_info))){
++			kfree(temp_info_array);
++			return -EFAULT;
++		}
++	}
++
++	if (copy_to_user(num_filled, &curr_num_filled, sizeof(long))){
++		return -EFAULT;
++	}
++
++	kfree(temp_info_array);
++	return 0;
++}
+\ No newline at end of file
+diff --git a/cs300/process_ancestors.h b/cs300/process_ancestors.h
+new file mode 100644
+index 0000000..64ee2b8
+--- /dev/null
++++ b/cs300/process_ancestors.h
+@@ -0,0 +1,18 @@
++// Structure to hold values returned by process_ancestors sys-call
++#ifndef _PROCESS_ANCESTORS_H
++#define _PROCESS_ANCESTORS_H
++
++#define ANCESTOR_NAME_LEN 16
++
++struct process_info {
++	long pid; /* Process ID */
++	char name[ANCESTOR_NAME_LEN]; /* Program name of process */
++	long state; /* Current process state */
++	long uid; /* User ID of process owner */
++	long nvcsw; /* # voluntary context switches */
++	long nivcsw; /* # involuntary context switches */
++	long num_children; /* # children process has */
++	long num_siblings; /* # sibling process has */
++};
++
++#endif
+-- 
+2.7.4
+
