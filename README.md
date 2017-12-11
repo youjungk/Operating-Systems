@@ -3,6 +3,7 @@
 ## Project 1: Review Unix Programming Tools and Basics of C Language
 __1. String Manipulation Functions__
 ...String manipulation functions similar to the standard C string functions.
+
 __2. Linked List Operations__
 ...The linked list data stucture containing number of functions that create and minipulate a linked list.
 
